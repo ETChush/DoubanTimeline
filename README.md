@@ -41,7 +41,7 @@
 1. 确保你已安装Go 1.16+环境
 2. 克隆仓库：
    ```bash
-   git clone https://github.com/yourusername/DoubanTimeline.git
+   git clone https://github.com/ETChush/DoubanTimeline.git
    cd DoubanTimeline
    ```
 3. 安装依赖：
@@ -123,3 +123,4 @@ DoubanTimeline/
 ## 许可证
 
 [MIT License](LICENSE)
+
