@@ -79,7 +79,7 @@
 
 1. 克隆仓库：
    ```bash
-   git clone https://github.com/yourusername/DoubanTimeline.git
+   git clone https://github.com/ETChush/DoubanTimeline.git
    cd DoubanTimeline
    ```
 2. 启动服务：
@@ -123,4 +123,5 @@ DoubanTimeline/
 ## 许可证
 
 [MIT License](LICENSE)
+
 
