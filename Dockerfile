@@ -22,8 +22,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o douban-timeline .
 # 使用轻量级镜像作为运行环境
 FROM alpine:latest
 
-# 安装 ca-certificates 用于 HTTPS 请求
-RUN apk --no-cache add ca-certificates
+# 安装必要的运行时依赖
+RUN apk --no-cache add \
+    ca-certificates \
+    python3 \
+    py3-pip \
+    && python3 -m pip install --break-system-packages httpx aiofiles lxml
 
 WORKDIR /app
 
@@ -36,6 +40,9 @@ RUN mkdir -p /app/images /app/templates /app/static
 # 复制模板和静态文件
 COPY --from=builder /app/templates ./templates
 COPY --from=builder /app/static ./static
+
+# 复制 Python 爬虫脚本
+COPY --from=builder /app/javbus_crawler.py .
 
 # 暴露端口
 EXPOSE 8080

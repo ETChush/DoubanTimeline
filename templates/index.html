@@ -1,9 +1,29 @@
-{{template "layout.html" .}}
-{{define "content"}}
+{{define "index.html"}}<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DoubanTimeline - 电影观看记录</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
 <div class="container">
     <header>
-        <h1>DoubanTimeline</h1>
-        <a href="#add-movie" class="btn-add">+ 添加电影</a>
+        <div class="header-left">
+            <h1>DoubanTimeline</h1>
+            <nav class="tab-nav">
+                <a href="/" class="tab-link active">豆瓣</a>
+                <a href="/jav" class="tab-link">JAV</a>
+            </nav>
+        </div>
+        <div class="header-right">
+            {{if .FavoritesOnly}}
+            <a href="/" class="btn-favorite">♥ 显示全部</a>
+            {{else}}
+            <a href="/?favorites=true" class="btn-favorite">♡ 我的最爱</a>
+            {{end}}
+            <a href="#add-movie" class="btn-add">+ 添加电影</a>
+        </div>
     </header>
 
     {{if .ErrorMsg}}
@@ -22,8 +42,8 @@
         {{range .Groups}}
         <div class="timeline-item">
             <div class="timeline-label">
-                <div class="month">{{.Month}}</div>
                 <div class="year">{{.Year}}</div>
+                <div class="month">{{.Month}}</div>
             </div>
             <div class="timeline-content">
                 <div class="movie-grid">
@@ -38,9 +58,23 @@
                             <div class="movie-overlay">
                                 <div class="movie-overlay-content">
                                     <div class="movie-date">{{formatFullDate .WatchedAt}}</div>
-                                    <a href="#delete-{{.ID}}" class="btn-delete">删除</a>
+                                    <div class="movie-actions">
+                                        <form method="POST" action="/toggle-favorite" style="display: inline;">
+                                            <input type="hidden" name="id" value="{{.ID}}">
+                                            {{if $.FavoritesOnly}}
+                                            <input type="hidden" name="from_favorites" value="true">
+                                            {{end}}
+                                            <button type="submit" class="btn-favorite-icon" title="{{if .IsFavorite}}取消收藏{{else}}添加到最爱{{end}}">
+                                                {{if .IsFavorite}}♥{{else}}♡{{end}}
+                                            </button>
+                                        </form>
+                                        <a href="#delete-{{.ID}}" class="btn-delete">删除</a>
+                                    </div>
                                 </div>
                             </div>
+                            {{if .IsFavorite}}
+                            <div class="favorite-badge">♥</div>
+                            {{end}}
                         </div>
                         <div class="movie-info">
                             <div class="movie-rating">{{formatRating .Rating}}</div>
@@ -103,5 +137,6 @@
 </div>
 {{end}}
 {{end}}
+</body>
+</html>
 {{end}}
-

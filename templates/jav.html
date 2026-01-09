@@ -1,0 +1,158 @@
+{{define "jav.html"}}<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DoubanTimeline - JAV 影片记录</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="container">
+    <header>
+        <div class="header-left">
+            <h1>DoubanTimeline</h1>
+            <nav class="tab-nav">
+                <a href="/" class="tab-link">豆瓣</a>
+                <a href="/jav" class="tab-link active">JAV</a>
+            </nav>
+        </div>
+        <div class="header-right">
+            {{if .FavoritesOnly}}
+            <a href="/jav" class="btn-favorite">♥ 显示全部</a>
+            {{else}}
+            <a href="/jav?favorites=true" class="btn-favorite">♡ 我的最爱</a>
+            {{end}}
+            <a href="#add-jav" class="btn-add">+ 添加影片</a>
+        </div>
+    </header>
+
+    {{if .ErrorMsg}}
+    <div class="message error">
+        {{.ErrorMsg}}
+    </div>
+    {{end}}
+
+    {{if .SuccessMsg}}
+    <div class="message success">
+        {{.SuccessMsg}}
+    </div>
+    {{end}}
+
+    <main class="timeline">
+        {{range .Groups}}
+        <div class="timeline-item">
+            <div class="timeline-label">
+                <div class="year">{{.Year}}</div>
+                <div class="month">{{.Month}}</div>
+            </div>
+            <div class="timeline-content">
+                <div class="movie-grid">
+                    {{range .JavMovies}}
+                    <div class="movie-card">
+                        <div class="movie-poster">
+                            {{if .Poster}}
+                            <img src="{{.Poster}}" alt="{{.Number}}" loading="lazy">
+                            {{else if .Thumb}}
+                            <img src="{{.Thumb}}" alt="{{.Number}}" loading="lazy">
+                            {{else}}
+                            <div class="movie-poster-placeholder">{{.Number}}</div>
+                            {{end}}
+                            <div class="movie-overlay">
+                                <div class="movie-overlay-content">
+                                    <div class="movie-date">{{formatFullDate .WatchedAt}}</div>
+                                    <div class="movie-actions">
+                                        <form method="POST" action="/jav/toggle-favorite" style="display: inline;">
+                                            <input type="hidden" name="id" value="{{.ID}}">
+                                            {{if $.FavoritesOnly}}
+                                            <input type="hidden" name="from_favorites" value="true">
+                                            {{end}}
+                                            <button type="submit" class="btn-favorite-icon" title="{{if .IsFavorite}}取消收藏{{else}}添加到最爱{{end}}">
+                                                {{if .IsFavorite}}♥{{else}}♡{{end}}
+                                            </button>
+                                        </form>
+                                        <a href="#delete-{{.ID}}" class="btn-delete">删除</a>
+                                    </div>
+                                </div>
+                            </div>
+                            {{if .IsFavorite}}
+                            <div class="favorite-badge">♥</div>
+                            {{end}}
+                        </div>
+                        <div class="movie-info">
+                            <div class="movie-rating">
+                                {{- if .Number -}}
+                                    {{.Number}}
+                                {{- else -}}
+                                    N/A
+                                {{- end -}}
+                            </div>
+                            <div class="movie-year"{{if or .Actor .Release}} title="{{if .Actor}}{{.Actor}}{{if .Release}} - {{.Release}}{{end}}{{else}}{{.Release}}{{end}}"{{end}}>
+                                {{- if .Release -}}
+                                    {{.Release}}
+                                {{- else if .Year -}}
+                                    {{.Year}}
+                                {{- else -}}
+                                    N/A
+                                {{- end -}}
+                            </div>
+                            {{if .Website}}
+                            <a href="{{.Website}}" target="_blank" class="movie-title" title="{{.Title}}">{{.Title}}</a>
+                            {{else}}
+                            <div class="movie-title" title="{{.Title}}">{{.Title}}</div>
+                            {{end}}
+                        </div>
+                    </div>
+                    {{end}}
+                </div>
+            </div>
+        </div>
+        {{end}}
+    </main>
+</div>
+
+<!-- 添加影片模态框 -->
+<div id="add-jav" class="modal">
+    <div class="modal-content">
+        <a href="#" class="modal-close">&times;</a>
+        <h2>添加 JAV 影片</h2>
+        <form method="POST" action="/jav/add">
+            <div class="form-group">
+                <label for="number">番号 *</label>
+                <input type="text" id="number" name="number" required placeholder="例如: SSIS-001">
+            </div>
+            <div class="form-group">
+                <label for="watched_at">观看时间</label>
+                <input type="date" id="watched_at" name="watched_at" value="{{formatDate (now)}}">
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn-submit">添加</button>
+                <a href="#" class="btn-cancel">取消</a>
+            </div>
+        </form>
+    </div>
+    <a href="#" class="modal-overlay"></a>
+</div>
+
+<!-- 删除确认对话框 -->
+{{range .Groups}}
+{{range .JavMovies}}
+<div id="delete-{{.ID}}" class="modal">
+    <div class="modal-content">
+        <a href="#" class="modal-close">&times;</a>
+        <h2>确认删除</h2>
+        <p>确定要删除《{{.Number}} - {{.Title}}》吗？此操作不可恢复。</p>
+        <form method="POST" action="/jav/delete" class="delete-form">
+            <input type="hidden" name="id" value="{{.ID}}">
+            <div class="form-actions">
+                <button type="submit" class="btn-submit btn-danger">确认删除</button>
+                <a href="#" class="btn-cancel">取消</a>
+            </div>
+        </form>
+    </div>
+    <a href="#" class="modal-overlay"></a>
+</div>
+{{end}}
+{{end}}
+</body>
+</html>
+{{end}}
