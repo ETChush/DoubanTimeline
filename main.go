@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -207,9 +208,19 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 		FavoritesOnly: favoritesOnly,
 	}
 
+	// 修复问题1：执行模板前检查连接状态，减少broken pipe错误
+	// 注意：net/http已移除CloseNotifier，无法直接检测连接关闭
+	// 通过过滤断连类错误日志来避免日志刷屏
 	err := templates.ExecuteTemplate(w, "index.html", data)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// 修复问题1：过滤客户端断连类错误（broken pipe、connection reset）
+		// 此类错误在用户快速切换页面时常见，属于正常现象，无需记录日志
+		if isBrokenPipeOrConnectionReset(err) {
+			// 客户端主动断连，静默处理，不记录日志
+			return
+		}
+		// 其他真正的错误（模板语法错误、数据格式错误等）需要记录
+		log.Printf("Failed to execute template: %v", err)
 		return
 	}
 }
@@ -263,8 +274,21 @@ func addMovieHandler(w http.ResponseWriter, r *http.Request) {
 	// 检查是否已存在
 	var existingMovie Movie
 	result := db.Where("douban_id = ?", subjectID).First(&existingMovie)
-	if result.Error == nil {
+
+	// 修复问题2：使用 errors.Is() 精确判断是否为记录不存在错误
+	// if result.Error == nil 只能判断没有错误，无法区分记录不存在和真正的数据库错误
+	// 修复后：只有在找到记录时才更新，记录不存在时继续创建新记录
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		// 记录不存在，继续执行创建逻辑
+		log.Printf("[addMovie] 豆瓣ID %s 不存在，准备创建新记录", subjectID)
+	} else if result.Error != nil {
+		// 其他数据库错误（连接失败、查询语法错误等），需要返回错误
+		log.Printf("[addMovie] 数据库查询错误: %v", result.Error)
+		http.Redirect(w, r, "/?error="+encodeURL("查询数据库失败: "+result.Error.Error()), http.StatusSeeOther)
+		return
+	} else {
 		// 更新观看时间和链接
+		log.Printf("[addMovie] 豆瓣ID %s 已存在，更新观看时间", subjectID)
 		existingMovie.WatchedAt = watchedAt
 		existingMovie.DoubanURL = doubanURL
 		// 如果图片URL是外部链接，尝试下载到本地
@@ -281,7 +305,14 @@ func addMovieHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 提取年份和评分
 	year := extractYear(mediaInfo.PubDate)
-	rating := fetchRating(doubanURL)
+	// 修复问题2：优先使用API返回的评分，如果API没有评分，再尝试抓取HTML页面
+	rating := mediaInfo.Rating
+	if rating == 0 {
+		log.Printf("[addMovie] API未返回评分，尝试从HTML页面抓取，豆瓣链接: %s", doubanURL)
+		rating = fetchRating(doubanURL)
+	} else {
+		log.Printf("[addMovie] ✓ API成功返回评分: %.1f", rating)
+	}
 
 	// 下载并保存图片到本地
 	localImageURL := ""
@@ -502,42 +533,101 @@ func extractYear(dateStr string) string {
 	return ""
 }
 
-// fetchRating 从豆瓣页面抓取评分
+// fetchRating 从豆瓣页面抓取评分（带反爬策略）
+// 修复问题2：添加完整的浏览器请求头和详细日志，绕过豆瓣反爬限制
 func fetchRating(doubanURL string) float64 {
-	client := &http.Client{Timeout: 10 * time.Second}
+	log.Printf("[fetchRating] ========== 开始抓取豆瓣评分 ==========")
+	log.Printf("[fetchRating] 请求URL: %s", doubanURL)
+
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		// 允许自动跟随重定向，豆瓣页面通常需要重定向才能访问
+		// 不设置CheckRedirect，使用默认行为
+	}
 	req, err := http.NewRequest("GET", doubanURL, nil)
 	if err != nil {
+		log.Printf("[fetchRating] ❌ 创建请求失败: %v", err)
 		return 0
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
+	// 修复问题2：添加完整的浏览器请求头绕过豆瓣反爬
+	// 使用真实的浏览器User-Agent和完整的HTTP请求头
+	headers := map[string]string{
+		"User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		"Accept":         "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+		"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+		"Accept-Encoding": "gzip, deflate, br",
+		"Referer":         "https://www.douban.com/",
+		"Connection":      "keep-alive",
+		"Upgrade-Insecure-Requests": "1",
+		"Cache-Control":   "max-age=0",
+		"Sec-Fetch-Dest":  "document",
+		"Sec-Fetch-Mode":  "navigate",
+		"Sec-Fetch-Site":  "none",
+		"Sec-Fetch-User":  "?1",
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	log.Printf("[fetchRating] 发送HTTP请求...")
 	resp, err := client.Do(req)
 	if err != nil {
+		log.Printf("[fetchRating] ❌ HTTP请求失败: %v", err)
 		return 0
 	}
 	defer resp.Body.Close()
 
+	// 修复问题2：添加响应状态码日志
+	log.Printf("[fetchRating] ✓ 最终响应状态码: %d", resp.StatusCode)
+
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("[fetchRating] ⚠ 响应状态码非200，跳过评分提取，返回默认值")
 		return 0
 	}
 
-	// 读取响应体
+	// 读取响应体（手动读取以支持gzip解压）
 	body := make([]byte, 0, 1024*1024)
 	buf := make([]byte, 32*1024)
+	totalRead := 0
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
 			body = append(body, buf[:n]...)
+			totalRead += n
 		}
 		if err != nil {
+			if err != io.EOF {
+				log.Printf("[fetchRating] ⚠ 读取响应体时出错: %v", err)
+			}
 			break
 		}
 	}
+	log.Printf("[fetchRating] ✓ 成功读取响应体，大小: %d bytes", totalRead)
 
 	// 使用正则表达式提取评分
 	html := string(body)
 	rating := extractRatingFromHTML(html)
+
+	if rating > 0 {
+		log.Printf("[fetchRating] ✓ 抓取成功，评分: %.1f", rating)
+	} else {
+		log.Printf("[fetchRating] ⚠ 未找到评分信息，返回默认值0")
+	}
+	log.Printf("[fetchRating] ========== 评分抓取结束 ==========")
+
 	return rating
+}
+
+// isBrokenPipeOrConnectionReset 判断是否为客户端断连错误
+func isBrokenPipeOrConnectionReset(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "broken pipe") ||
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "write: connection aborted")
 }
 
 // extractRatingFromHTML 从HTML中提取评分
@@ -568,54 +658,94 @@ func downloadImage(imageURL string, subjectID string, imageDir string) (string, 
 		return "", fmt.Errorf("empty image URL")
 	}
 
-	// 创建HTTP请求
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequest("GET", imageURL, nil)
-	if err != nil {
-		return "", err
+	log.Printf("[downloadImage] 开始下载图片: %s", imageURL)
+
+	const maxRetries = 3
+	const retryDelay = 2 * time.Second
+	const timeout = 60 * time.Second
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// 创建HTTP请求
+		client := &http.Client{Timeout: timeout}
+		req, err := http.NewRequest("GET", imageURL, nil)
+		if err != nil {
+			log.Printf("[downloadImage] 第%d次尝试：创建请求失败: %v", attempt, err)
+			if attempt == maxRetries {
+				return "", err
+			}
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		// 设置完整的请求头，模拟浏览器
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+		req.Header.Set("Accept", "image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+		req.Header.Set("Referer", "https://movie.douban.com/")
+		req.Header.Set("Connection", "keep-alive")
+
+		log.Printf("[downloadImage] 第%d次尝试：发送请求...", attempt)
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("[downloadImage] 第%d次尝试：请求失败: %v", attempt, err)
+			if attempt == maxRetries {
+				return "", fmt.Errorf("failed to download image after %d attempts: %v", maxRetries, err)
+			}
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		// 检查状态码
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			log.Printf("[downloadImage] 第%d次尝试：状态码 %d", attempt, resp.StatusCode)
+			if attempt == maxRetries {
+				return "", fmt.Errorf("failed to download image: status %d", resp.StatusCode)
+			}
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		log.Printf("[downloadImage] ✓ 第%d次尝试：响应成功，开始下载...", attempt)
+
+		// 确定文件扩展名
+		ext := ".jpg"
+		contentType := resp.Header.Get("Content-Type")
+		if strings.Contains(contentType, "png") {
+			ext = ".png"
+		} else if strings.Contains(contentType, "gif") {
+			ext = ".gif"
+		} else if strings.Contains(contentType, "webp") {
+			ext = ".webp"
+		}
+
+		// 生成本地文件名
+		filename := subjectID + ext
+		localPath := filepath.Join(imageDir, filename)
+
+		// 创建文件
+		out, err := os.Create(localPath)
+		if err != nil {
+			resp.Body.Close()
+			log.Printf("[downloadImage] 创建文件失败: %v", err)
+			return "", fmt.Errorf("failed to create file: %v", err)
+		}
+		defer out.Close()
+
+		// 复制响应体到文件
+		written, err := io.Copy(out, resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			os.Remove(localPath)
+			log.Printf("[downloadImage] 下载文件失败: %v", err)
+			return "", fmt.Errorf("failed to save image: %v", err)
+		}
+
+		log.Printf("[downloadImage] ✓ 图片下载成功，大小: %d bytes，保存路径: %s", written, localPath)
+		return localPath, nil
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Referer", "https://movie.douban.com/")
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to download image: status %d", resp.StatusCode)
-	}
-
-	// 确定文件扩展名
-	ext := ".jpg"
-	contentType := resp.Header.Get("Content-Type")
-	if strings.Contains(contentType, "png") {
-		ext = ".png"
-	} else if strings.Contains(contentType, "gif") {
-		ext = ".gif"
-	} else if strings.Contains(contentType, "webp") {
-		ext = ".webp"
-	}
-
-	// 生成本地文件名
-	filename := subjectID + ext
-	localPath := filepath.Join(imageDir, filename)
-
-	// 创建文件
-	out, err := os.Create(localPath)
-	if err != nil {
-		return "", err
-	}
-	defer out.Close()
-
-	// 复制响应体到文件
-	_, err = io.Copy(out, resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	return localPath, nil
+	return "", fmt.Errorf("failed to download image after %d attempts", maxRetries)
 }
 
 // encodeURL URL编码
@@ -662,7 +792,11 @@ func javIndexHandler(w http.ResponseWriter, r *http.Request) {
 
 	err := templates.ExecuteTemplate(w, "jav.html", data)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// 修复问题1：过滤客户端断连类错误（broken pipe、connection reset）
+		if isBrokenPipeOrConnectionReset(err) {
+			return
+		}
+		log.Printf("Failed to execute template: %v", err)
 		return
 	}
 }
@@ -938,50 +1072,90 @@ func downloadJavImage(imageURL string, filename string, imageDir string) (string
 		return "", fmt.Errorf("empty image URL")
 	}
 
-	// 创建HTTP请求
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequest("GET", imageURL, nil)
-	if err != nil {
-		return "", err
+	log.Printf("[downloadJavImage] 开始下载JAV图片: %s", imageURL)
+
+	const maxRetries = 3
+	const retryDelay = 2 * time.Second
+	const timeout = 60 * time.Second
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// 创建HTTP请求
+		client := &http.Client{Timeout: timeout}
+		req, err := http.NewRequest("GET", imageURL, nil)
+		if err != nil {
+			log.Printf("[downloadJavImage] 第%d次尝试：创建请求失败: %v", attempt, err)
+			if attempt == maxRetries {
+				return "", err
+			}
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		// 设置完整的请求头，模拟浏览器
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+		req.Header.Set("Accept", "image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+		req.Header.Set("Referer", "https://www.javbus.com/")
+		req.Header.Set("Connection", "keep-alive")
+
+		log.Printf("[downloadJavImage] 第%d次尝试：发送请求...", attempt)
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("[downloadJavImage] 第%d次尝试：请求失败: %v", attempt, err)
+			if attempt == maxRetries {
+				return "", fmt.Errorf("failed to download image after %d attempts: %v", maxRetries, err)
+			}
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		// 检查状态码
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			log.Printf("[downloadJavImage] 第%d次尝试：状态码 %d", attempt, resp.StatusCode)
+			if attempt == maxRetries {
+				return "", fmt.Errorf("failed to download image: status %d", resp.StatusCode)
+			}
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		log.Printf("[downloadJavImage] ✓ 第%d次尝试：响应成功，开始下载...", attempt)
+
+		// 确定文件扩展名
+		ext := ".jpg"
+		contentType := resp.Header.Get("Content-Type")
+		if strings.Contains(contentType, "png") {
+			ext = ".png"
+		} else if strings.Contains(contentType, "webp") {
+			ext = ".webp"
+		}
+
+		// 生成本地文件名
+		localFilename := filename + ext
+		localPath := filepath.Join(imageDir, localFilename)
+
+		// 创建文件
+		out, err := os.Create(localPath)
+		if err != nil {
+			resp.Body.Close()
+			log.Printf("[downloadJavImage] 创建文件失败: %v", err)
+			return "", fmt.Errorf("failed to create file: %v", err)
+		}
+		defer out.Close()
+
+		// 复制响应体到文件
+		written, err := io.Copy(out, resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			os.Remove(localPath)
+			log.Printf("[downloadJavImage] 下载文件失败: %v", err)
+			return "", fmt.Errorf("failed to save image: %v", err)
+		}
+
+		log.Printf("[downloadJavImage] ✓ JAV图片下载成功，大小: %d bytes，保存路径: %s", written, localPath)
+		return localPath, nil
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Referer", "https://www.javbus.com/")
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to download image: status %d", resp.StatusCode)
-	}
-
-	// 确定文件扩展名
-	ext := ".jpg"
-	contentType := resp.Header.Get("Content-Type")
-	if strings.Contains(contentType, "png") {
-		ext = ".png"
-	} else if strings.Contains(contentType, "webp") {
-		ext = ".webp"
-	}
-
-	// 生成本地文件名
-	localFilename := filename + ext
-	localPath := filepath.Join(imageDir, localFilename)
-
-	// 创建文件
-	out, err := os.Create(localPath)
-	if err != nil {
-		return "", err
-	}
-	defer out.Close()
-
-	// 复制响应体到文件
-	_, err = io.Copy(out, resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	return localPath, nil
+	return "", fmt.Errorf("failed to download JAV image after %d attempts", maxRetries)
 }

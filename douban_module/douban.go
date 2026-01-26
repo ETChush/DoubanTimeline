@@ -29,16 +29,17 @@ const (
 }
 
 // DoubanBookSubject 豆瓣图书主题
- type DoubanBookSubject struct {
-	Title        string      `json:"title"`
-	AltTitle     string      `json:"book_subtitle"`
-	PubDate      []string    `json:"pubdate"`
-	Author       []string    `json:"author"`
-	Press        []string    `json:"press"`
-	CardSubtitle string      `json:"card_subtitle"`
-	Intro        string      `json:"intro"`
-	Type         string      `json:"type"`
-	Cover        DoubanCover `json:"pic"`
+type DoubanBookSubject struct {
+	Title        string         `json:"title"`
+	AltTitle     string         `json:"book_subtitle"`
+	PubDate      []string       `json:"pubdate"`
+	Author       []string       `json:"author"`
+	Press        []string       `json:"press"`
+	CardSubtitle string         `json:"card_subtitle"`
+	Intro        string         `json:"intro"`
+	Type         string         `json:"type"`
+	Cover        DoubanCover    `json:"pic"`
+	Rating       *DoubanRating  `json:"rating"`
 }
 
 // DoubanMovieSubject 豆瓣电影主题
@@ -51,6 +52,7 @@ const (
 	Intro        string           `json:"intro"`
 	Type         string           `json:"type"`
 	Cover        DoubanCover      `json:"pic"`
+	Rating       *DoubanRating    `json:"rating"`
 }
 
 // DoubanGameSubject 豆瓣游戏主题
@@ -63,6 +65,14 @@ const (
 	Intro       string      `json:"intro"`
 	Type        string      `json:"type"`
 	Cover       DoubanCover `json:"pic"`
+	Rating      *DoubanRating `json:"rating"`
+}
+
+// DoubanRating 豆瓣评分信息
+type DoubanRating struct {
+	Count int     `json:"count"`
+	Value float64 `json:"value"`
+	Max   int     `json:"max"`
 }
 
 // MediaSubject 统一的媒体主题结构
@@ -74,6 +84,7 @@ type MediaSubject struct {
 	PubDate  string
 	Summary  string
 	ImageURL string
+	Rating   float64
 }
 
 // ParseDoubanURL 解析豆瓣URL，提取subject ID
@@ -178,6 +189,7 @@ func FetchDoubanMediaInfo(subjectType, subjectID string) (MediaSubject, error) {
 		pubDate  string
 		summary  string
 		imageURL string
+		rating   float64
 	)
 
 	switch subject := doubanSubject.(type) {
@@ -189,6 +201,10 @@ func FetchDoubanMediaInfo(subjectType, subjectID string) (MediaSubject, error) {
 		pubDate = getFirstPubdate(subject.PubDate)
 		summary = subject.Intro
 		imageURL = subject.Cover.Normal
+		// 提取评分
+		if subject.Rating != nil {
+			rating = subject.Rating.Value
+		}
 	case *DoubanMovieSubject:
 		title = subject.Title
 		altTitle = subject.AltTitle
@@ -202,6 +218,10 @@ func FetchDoubanMediaInfo(subjectType, subjectID string) (MediaSubject, error) {
 		pubDate = getFirstPubdate(subject.PubDate)
 		summary = subject.Intro
 		imageURL = subject.Cover.Normal
+		// 提取评分
+		if subject.Rating != nil {
+			rating = subject.Rating.Value
+		}
 	case *DoubanGameSubject:
 		if strings.Contains(subject.Title, subject.TitleCN) {
 			title = subject.TitleCN
@@ -215,6 +235,10 @@ func FetchDoubanMediaInfo(subjectType, subjectID string) (MediaSubject, error) {
 		pubDate = subject.ReleaseDate
 		summary = subject.Intro
 		imageURL = subject.Cover.Normal
+		// 提取评分
+		if subject.Rating != nil {
+			rating = subject.Rating.Value
+		}
 	}
 
 	return MediaSubject{
@@ -225,6 +249,7 @@ func FetchDoubanMediaInfo(subjectType, subjectID string) (MediaSubject, error) {
 		PubDate:  pubDate,
 		Summary:  summary,
 		ImageURL: imageURL,
+		Rating:   rating,
 	}, nil
 }
 
