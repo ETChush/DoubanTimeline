@@ -27,52 +27,6 @@
 
 ## 快速开始
 
-### 方法一：直接运行可执行文件
-
-1. 从[Releases](https://github.com/yourusername/DoubanTimeline/releases)页面下载适合你系统的可执行文件
-2. 运行可执行文件：
-   ```bash
-   ./douban-timeline
-   ```
-3. 打开浏览器访问 `http://localhost:8080`
-
-### 方法二：从源码构建
-
-1. 确保你已安装Go 1.16+环境
-2. 克隆仓库：
-   ```bash
-   git clone https://github.com/ETChush/DoubanTimeline.git
-   cd DoubanTimeline
-   ```
-3. 安装依赖：
-   ```bash
-   go mod download
-   ```
-4. 构建并运行：
-   ```bash
-   go build -o douban-timeline main.go
-   ./douban-timeline
-   ```
-5. 打开浏览器访问 `http://localhost:8080`
-
-## 使用方法
-
-### 添加条目
-
-1. 在首页输入豆瓣链接（支持电影、书籍、剧集）
-2. 可选：设置观看/阅读/游玩日期
-3. 点击「添加」按钮
-
-### 查看时间轴
-
-- 首页会按年月分组展示你的所有记录
-- 点击条目可以查看详细信息
-
-### 删除条目
-
-- 点击条目前的删除按钮即可删除该条目
-
-
 ## Docker部署
 
 ### 使用Docker Compose（推荐）
@@ -94,26 +48,6 @@
 - `DATA_DIR`：数据目录路径，默认值：`.`
 - `IMAGE_DIR`：图片存储目录路径，默认值：`images`
 
-## 项目结构
-
-```
-DoubanTimeline/
-├── douban_module/      # 豆瓣API交互模块
-│   ├── douban.go       # 核心豆瓣API功能
-│   └── example.go      # 示例代码
-├── static/            # 静态资源
-│   └── style.css      # 样式文件
-├── templates/         # HTML模板
-│   ├── index.html     # 首页模板
-│   └── layout.html    # 布局模板
-├── .dockerignore      # Docker忽略文件
-├── DOCKER.md          # Docker详细说明
-├── Dockerfile         # Dockerfile
-├── docker-compose.yml # Docker Compose配置
-├── go.mod             # Go模块文件
-├── go.sum             # Go依赖校验文件
-└── main.go            # 主程序入口
-```
 
 ## 数据存储
 
@@ -123,5 +57,6 @@ DoubanTimeline/
 ## 许可证
 
 [MIT License](LICENSE)
+
 
 
